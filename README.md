@@ -20,6 +20,18 @@ It is not a reproduction of the MedVision paper's full benchmark, and not a fine
 
 Tumor size (e.g. longest diameter) is a standard clinical measurement used to track disease and treatment response. A VLM reading a scan only sees pixels — it has no inherent sense of scale unless that information is supplied. Pixel spacing (how many millimeters one pixel represents) is exactly the missing conversion factor between "pixels" and "millimeters." If explicitly providing it doesn't help — or actively hurts — that's a meaningful, checkable finding about how (or whether) these models actually ground numeric answers in the image, rather than assuming spacing is trivially useful context.
 
+## Intended Use and Boundaries
+
+This project explores a narrow technical question — whether a VLM's zero-shot size estimate benefits from explicit pixel-spacing context — using one small, open dataset. It is a research/portfolio pilot, not a clinical tool.
+
+**This is NOT:**
+- Clinically validated in any way (no regulatory review, no clinical trial, no radiologist-adjudicated ground truth).
+- For diagnosis, staging, or treatment decisions.
+- A replacement for a radiologist's or a deterministic algorithm's measurement.
+- Suitable for autonomous clinical reporting — every output here is a model guess, not a verified measurement.
+
+Any real use of VLM-based measurement in a clinical or product context would require a validated ground-truth dataset, clinician review, and regulatory consideration well beyond this pilot's scope.
+
 ## Dataset: KiPA22
 
 [KiPA22](https://kipa22.grand-challenge.org) is a kidney CT dataset with segmentation masks for four structures: kidney, kidney tumor, renal artery, renal vein. Redistributed by the MedVision project on Hugging Face ([`YongchengYAO/KiPA22`](https://huggingface.co/datasets/YongchengYAO/KiPA22), CC BY-NC-4.0) as a single ~400MB zip of 49 training cases — by far the smallest of MedVision's tumor-size-annotated datasets, which made it the practical choice for a single-machine pilot (alternatives range from ~3GB to ~96GB).
@@ -27,6 +39,12 @@ Tumor size (e.g. longest diameter) is a standard clinical measurement used to tr
 ## Model: `google/medgemma-1.5-4b-it`
 
 [MedGemma](https://huggingface.co/google/medgemma-1.5-4b-it) is Google's open, medically-tuned multimodal model (4B parameters, Gemma 3-based), trained on medical images including radiology. Chosen over larger general-purpose VLMs for being open-weight, small enough to run on a free-tier GPU, and domain-relevant — a reasonable candidate for "can an off-the-shelf medical VLM do this out of the box," with no fine-tuning involved.
+
+## Why a VLM?
+
+Once a segmentation mask exists, tumor size is a solved problem — deterministic geometry (fit an ellipse, apply voxel spacing) gives a reliable, reproducible measurement, and that is exactly how this project's own reference measurements are produced (below). A VLM is not needed to measure a tumor that is already segmented.
+
+This experiment asks a different, more speculative question: **can an off-the-shelf medical VLM infer a quantitative measurement directly from the raw image and a stated scale, without ever receiving a segmentation mask?** That's a meaningfully harder task — it requires the model to locate the tumor, judge its extent, and apply a scale conversion, all from pixels alone. Using a VLM here is a deliberate experiment testing whether that's currently feasible, not an assumption that a VLM is the best or right tool for tumor measurement.
 
 ## Methodology
 
@@ -81,6 +99,18 @@ This pattern is **descriptive, not a proven causal explanation**. What it does s
 
 **We do not claim that pixel spacing is generally harmful to VLM tumor-size estimation.** The honest summary is narrower: in this small pilot, explicit spacing increased error across all five scored cases, and the largely repetitive predictions across both experiments suggest weak image-grounded quantitative measurement under the specific zero-shot prompting setup tested here — not a general result about MedGemma, spacing information, or VLMs.
 
+## Ways This Could Fail in Practice
+
+Framed as product risk, grounded in what this pilot actually observed:
+
+- **Plausible-looking but ungrounded measurements.** A structured, well-formatted `{"major_mm": X, "minor_mm": Y}` answer looks trustworthy regardless of whether it reflects the actual image — as seen here, where Experiment A returned an identical answer for every case.
+- **Repetitive/default numeric answers.** A model can fall back to a generic-looking guess rather than a per-image measurement, as the identical `15×10mm` output across all 6 cases suggests may have happened.
+- **Misinterpreting scale information.** Providing pixel spacing did not reliably act as a unit-conversion factor here; in most cases the answer changed by a suspiciously clean 10× rather than in a way explainable by the stated spacing.
+- **Measuring the wrong structure.** With no mask or outline provided, nothing in this pipeline confirms the model was actually looking at the tumor rather than the kidney, an adjacent structure, or nothing specific at all.
+- **False precision from structured output.** Forcing a numeric JSON answer can manufacture an appearance of precision (e.g. "11.5mm") that isn't backed by genuine image-grounded measurement.
+- **Non-generalization.** Results come from one organ (kidney), one dataset (KiPA22), one model, and one prompt — performance on other organs, datasets, imaging modalities, or scanners is untested and cannot be assumed.
+- **Misplaced trust.** The biggest practical risk is a downstream user treating any of these numbers as clinically reliable simply because they're numeric and confidently formatted.
+
 ## Limitations
 
 - **n=5 scored cases** — a pilot sample, not a statistically powered study. No claim here generalizes beyond this specific setup.
@@ -88,6 +118,23 @@ This pattern is **descriptive, not a proven causal explanation**. What it does s
 - Reference measurements come from an ellipse fit to a single 2D slice, not a clinician's read — a reasonable proxy, but not clinical ground truth.
 - The repetitive-prediction pattern is an observation from 6 cases; it has not been mechanistically explained or verified with larger-scale or ablation testing.
 - Zero-shot only — no fine-tuning, no chain-of-thought reasoning was requested or relied upon (only the structured final answer was scored, though full raw responses were saved for transparency).
+
+## What I Would Ship
+
+Based on this pilot's evidence, **I would not ship zero-shot VLM tumor measurement as the primary measurement engine.** Where a segmentation mask is available (or obtainable), deterministic geometry is the safer, more reliable, and fully auditable quantitative path — it's what this project itself uses for reference measurements, and nothing here outperforms it.
+
+A VLM may still have a legitimate role, but as a **supporting layer rather than the measurement source of truth** — for example: generating a plain-language explanation of a measurement already computed deterministically, assisting a clinician's workflow (e.g. drafting a report section for review), or flagging cases where its own estimate disagrees sharply with a deterministic measurement for human follow-up. This is a product decision driven by observed reliability in this pilot, not a claim that VLMs are inherently incapable of this task — a different model, prompt, fine-tuning approach, or larger evaluation could change this conclusion.
+
+## Production Metrics and Governance
+
+If a system like this moved toward production, I would track:
+
+- **Accuracy**: MAE / MRE against a trusted reference measurement.
+- **Reliability**: parse success/failure rate, and rate of repeated/default-looking answers (this pilot's biggest red flag).
+- **Safety net**: disagreement rate against deterministic or clinician measurements; clinician override/review rate.
+- **Operations**: latency per case, compute/API cost per case.
+- **Drift**: performance stability across sites, scanners, and patient populations over time.
+- **Auditability**: full logging of raw model output, prompt version, and model/version used per prediction — so any measurement can be traced back to exactly what produced it.
 
 ## Reproducibility
 
@@ -136,3 +183,7 @@ outputs/                Figures, windowed images, raw model responses
 ## Conclusion
 
 In this small pilot, an off-the-shelf medical VLM's zero-shot tumor-size estimates did not benefit from being told the CT slice's pixel spacing — error increased on every scored case — and the largely repetitive predictions across both experiments suggest the model's answers were only weakly grounded in each image's actual content under this prompting setup. The pipeline built here (reference measurement → windowed VLM input → structured prediction → scored comparison) is reusable for a larger, better-powered follow-up before drawing any general conclusion.
+
+## Ownership / Role
+
+I defined this project end to end: selected the research question, chose the dataset and model, and designed the A/B experiment (scored vs. exploratory cases, MAE/MRE metrics, deterministic generation settings). I built and validated the reference-measurement and QC workflow, inspected the raw model outputs for failure patterns, and interpreted the results — including deciding how far the findings could and couldn't be generalized. I used AI coding assistance during implementation, but reviewed, tested, and validated the methodology, code, outputs, and conclusions myself; the analysis and product judgments in this README are mine.
