@@ -1,0 +1,6 @@
+.venv/
+data/*
+!data/README.md
+__pycache__/
+*.pyc
+.DS_Store
