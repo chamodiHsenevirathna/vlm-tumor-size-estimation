@@ -1,0 +1,12 @@
+=== Prompt ===
+You are shown an axial CT slice of a kidney. This image has a pixel spacing of 0.7793 mm x 0.7793 mm per pixel
+(each pixel represents that many millimeters of real-world distance, in both the horizontal and vertical directions).
+Using this scale, identify the kidney tumor (if visible) and estimate its size.
+Report the length of the tumor's longest axis (major axis) and the length of its shortest perpendicular axis (minor axis), in millimeters.
+Respond only in this exact format:
+<answer>{"major_mm": X, "minor_mm": Y}</answer>
+where X and Y are numbers in millimeters.
+
+=== Raw response ===
+<answer>{"major_mm": 1.5, "minor_mm": 1.0}</answer>
+

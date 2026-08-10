@@ -1,0 +1,3 @@
+experiment,major_mm_pred,minor_mm_pred,major_mm_ref,minor_mm_ref,major_abs_error_mm,major_pct_error,minor_abs_error_mm,minor_pct_error
+A_no_spacing,15,10,16.33,13.98,1.33,8.14,3.98,28.47
+B_with_spacing,1.5,1.0,16.33,13.98,14.83,90.81,12.98,92.85

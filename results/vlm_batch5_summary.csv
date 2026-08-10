@@ -1,0 +1,9 @@
+metric,value
+scored_avg_mae_no_spacing,17.956
+scored_avg_mae_with_spacing,25.806
+scored_avg_mre_no_spacing,0.5134102933047365
+scored_avg_mre_with_spacing,0.8752087198503725
+scored_cases_improved,0
+scored_cases_worsened,5
+scored_cases_unchanged,0
+scored_cases_undetermined,0

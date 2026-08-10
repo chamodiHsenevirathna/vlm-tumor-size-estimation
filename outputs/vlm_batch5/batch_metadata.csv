@@ -1,0 +1,7 @@
+case_id,scored,slice_idx,pixel_spacing_mm,major_mm_ref,minor_mm_ref,qc_flag,image_filename
+0,True,133,0.5859,16.33,13.98,pass_basic,case_0_slice.png
+3,True,33,0.6816,22.57,21.47,pass_basic,case_3_slice.png
+5,True,127,0.5859,28.77,23.39,pass_basic,case_5_slice.png
+6,True,39,0.7148,37.23,36.09,pass_basic,case_6_slice.png
+8,True,133,0.5859,56.64,48.09,pass_basic,case_8_slice.png
+2,False,47,0.7793,27.44,19.36,ellipse_outside_bbox,case_2_slice.png
