@@ -34,3 +34,12 @@ pilot5_images*.zip
 .ipynb_checkpoints/
 .pytest_cache/
 *.egg-info/
+
+# --- CT-derived / blank-slice outputs withheld from the public history (see docs/HISTORY.md) ----------
+outputs/sample_overlay.png
+outputs/tumor_size_measurement.png
+outputs/batch_examples/
+outputs/qc_analysis/
+outputs/vlm_batch5/case_*_slice.png
+outputs/vlm_batch5/images.zip
+outputs/vlm_case0/slice_windowed.png

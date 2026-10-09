@@ -20,8 +20,9 @@ to the stored values) to the six slices that were sent to the model, plus case 4
 | 6 | 67 | 99.6% (90 non-white pixels) |
 | 8 | 66 | 99.6% (128 non-white pixels) |
 
-Re-running the original formula reproduces the committed PNGs pixel for pixel (cases 0, 2, 6, 8). The committed files
-are 222-553 bytes each.
+Re-running the original formula reproduced the originally committed PNGs pixel for pixel (cases 0, 2, 6, 8). Those files
+were 222-553 bytes each. They have since been removed from the published history (see [`HISTORY.md`](HISTORY.md)); the
+formula and numbers above allow the check to be repeated from the source data.
 
 **2. The stored values are not Hounsfield units.** In all 10 locally extracted cases the NIfTI volumes are `uint16`
 (values 0-2469, which cannot represent negative HU), `scl_slope` and `scl_inter` are NaN, and the header has no
