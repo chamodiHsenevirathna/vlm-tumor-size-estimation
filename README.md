@@ -1,189 +1,275 @@
 # VLM Tumor Size Estimation
 
-A small, MedVision-inspired pilot study testing whether an open vision-language model (VLM) can estimate kidney tumor size from a CT slice, and whether telling it the image's pixel spacing helps.
+A research prototype that asks whether an open medical vision-language model (`google/medgemma-1.5-4b-it`) can
+estimate kidney-tumor size from a CT slice, and whether telling it the image's pixel spacing helps.
 
-## Overview
+> **Status: engineering foundation complete; corrected VLM inference is PENDING.**
+> The first VLM experiment (Milestones 5-7) used **blank, invalid input images** because of a CT intensity-preprocessing
+> bug. **Its results cannot support its original conclusions** and are retained only for transparency. The bug is fixed
+> and tested, and a corrected five-case smoke test is implemented, but **no corrected model run has been performed**.
+> This is not a clinical tool. See [What went wrong](#what-went-wrong-and-what-is-invalid) and
+> [`docs/PHASE0_AUDIT.md`](docs/PHASE0_AUDIT.md).
 
-This project builds a minimal, reproducible pipeline that:
-1. Loads a real tumor CT case (KiPA22) with its ground-truth segmentation mask.
-2. Derives a MedVision-style reference tumor measurement (major/minor axis, in mm) directly from that mask.
-3. Prompts an open medical VLM (`google/medgemma-1.5-4b-it`) to estimate the same measurement from the CT image alone — with and without being told the image's real-world pixel spacing.
-4. Compares the model's predictions against the reference measurements.
+## Contents
 
-It is not a reproduction of the MedVision paper's full benchmark, and not a fine-tuning or training project — it's a small, self-contained experiment built end-to-end from public data to a scored (if inconclusive) result.
+1. [Problem statement](#problem-statement) · 2. [Research questions and objectives](#research-questions-and-objectives)
+3. [What went wrong and what is invalid](#what-went-wrong-and-what-is-invalid) · 4. [Status at a glance](#status-at-a-glance)
+5. [Architecture and methodology](#architecture-and-methodology) · 6. [Implemented features and verified tests](#implemented-features-and-verified-tests)
+7. [Reference measurements (valid)](#reference-measurements-valid) · 8. [Development phases](#development-phases)
+9. [Limitations, assumptions and future work](#limitations-assumptions-and-future-work)
+10. [Setup and reproduction](#setup-and-reproduction) · 11. [Repository structure](#repository-structure)
+12. [Licensing, data and model terms](#licensing-data-and-model-terms) · 13. [Intended use](#intended-use-and-boundaries)
+14. [AI assistance and acknowledgements](#ai-assistance-and-acknowledgements)
 
-## Research question
+## Problem statement
 
-**Does giving a vision-language model the physical pixel spacing of a CT slice improve its zero-shot estimate of tumor size, compared to giving it no spacing information at all?**
+Tumor size (for example longest diameter) is a standard clinical measurement. A vision-language model reading a scan
+sees only pixels; it has no inherent sense of physical scale unless that is supplied. Pixel spacing (millimetres per
+pixel) is the missing conversion factor between "pixels" and "millimetres". Once a tumor is segmented, size is a solved
+deterministic problem (fit an ellipse, apply the voxel spacing), and that is how this project produces its reference
+values. The open question is the harder one: **can an off-the-shelf medical VLM infer a quantitative measurement from the
+raw image alone, without a mask, and does a stated scale help?** The project tests that deliberately and carefully; it
+does not assume a VLM is the right tool for measurement.
 
-## Why this matters
+## Research questions and objectives
 
-Tumor size (e.g. longest diameter) is a standard clinical measurement used to track disease and treatment response. A VLM reading a scan only sees pixels — it has no inherent sense of scale unless that information is supplied. Pixel spacing (how many millimeters one pixel represents) is exactly the missing conversion factor between "pixels" and "millimeters." If explicitly providing it doesn't help — or actively hurts — that's a meaningful, checkable finding about how (or whether) these models actually ground numeric answers in the image, rather than assuming spacing is trivially useful context.
+- **RQ1.** Does stating the physical pixel spacing improve a VLM's zero-shot tumor-size estimate compared with no
+  spacing information? *(Open. The first attempt was invalid; see below.)*
+- **RQ2.** Are the model's numeric answers grounded in the image, or generic/templated? *(Open.)*
 
-## Intended Use and Boundaries
+Objectives: build a reproducible pipeline from public data to a scored comparison; derive trustworthy reference
+measurements from ground-truth masks; make the image-preparation step verifiable so a silent failure like the one below
+cannot recur; run any model experiment with complete raw logging and honest, descriptive reporting.
 
-This project explores a narrow technical question — whether a VLM's zero-shot size estimate benefits from explicit pixel-spacing context — using one small, open dataset. It is a research/portfolio pilot, not a clinical tool.
+## What went wrong and what is invalid
 
-**This is NOT:**
-- Clinically validated in any way (no regulatory review, no clinical trial, no radiologist-adjudicated ground truth).
-- For diagnosis, staging, or treatment decisions.
-- A replacement for a radiologist's or a deterministic algorithm's measurement.
-- Suitable for autonomous clinical reporting — every output here is a model guess, not a verified measurement.
+The VLM input images were produced by windowing the NIfTI intensities as if they were Hounsfield units. They are not:
+the KiPA22 volumes are `uint16` with no scaling metadata (values about 0-2500), so the window clipped almost every pixel
+to white. In the six slices that were sent to the model, cases 0, 2 and 5 were a single flat white value, case 3 had one
+non-white pixel out of 29,241, and cases 6 and 8 were 99.6% white (90 and 128 non-white pixels).
 
-Any real use of VLM-based measurement in a clinical or product context would require a validated ground-truth dataset, clinician review, and regulatory consideration well beyond this pilot's scope.
+**Consequence.** The earlier results (average error figures, "spacing increased error on 5 of 5 cases", the identical
+`15 x 10 mm` outputs, and the "10x" pattern) describe how the model answered a blank image. They say nothing about
+MedGemma's measurement ability or about pixel-spacing context. Those conclusions are withdrawn.
 
-## Dataset: KiPA22
+**What is preserved, unmodified:** the original notebooks, raw model responses, result CSVs, figures and
+`milestone7_findings.md`, each directory carrying a notice (`results/` and `outputs/NOTICE_INVALID_VLM_RESULTS.md`).
+The reference measurements and QC results do not depend on image intensities and are **not** affected.
 
-[KiPA22](https://kipa22.grand-challenge.org) is a kidney CT dataset with segmentation masks for four structures: kidney, kidney tumor, renal artery, renal vein. Redistributed by the MedVision project on Hugging Face ([`YongchengYAO/KiPA22`](https://huggingface.co/datasets/YongchengYAO/KiPA22), CC BY-NC-4.0) as a single ~400MB zip of 49 training cases — by far the smallest of MedVision's tumor-size-annotated datasets, which made it the practical choice for a single-machine pilot (alternatives range from ~3GB to ~96GB).
+**The fix** is a shared, offset-aware conversion with export validation (`src/ct_preprocessing.py`). The offset
+**1024 (stored = HU + 1024) is an unverified, dataset-specific hypothesis**: it fits the data well, but the data only
+constrain it to roughly 1000-1040 and no documentation confirms it. It is therefore a configurable parameter.
 
-## Model: `google/medgemma-1.5-4b-it`
+## Status at a glance
 
-[MedGemma](https://huggingface.co/google/medgemma-1.5-4b-it) is Google's open, medically-tuned multimodal model (4B parameters, Gemma 3-based), trained on medical images including radiology. Chosen over larger general-purpose VLMs for being open-weight, small enough to run on a free-tier GPU, and domain-relevant — a reasonable candidate for "can an off-the-shelf medical VLM do this out of the box," with no fine-tuning involved.
+| Area | Status |
+|---|---|
+| Reference tumor measurement from masks, QC flagging (10 cases) | Done, valid |
+| Original VLM experiment (Milestones 5-7) | **Invalid** (blank images); preserved for transparency |
+| Root-cause analysis of the invalid images | Done ([`docs/PHASE0_AUDIT.md`](docs/PHASE0_AUDIT.md)) |
+| Corrected CT preprocessing + validation + tests | Done; offset 1024 remains an unverified hypothesis |
+| Five-case pilot pipeline (bundle, verification, notebook, logging) | Implemented and unit-tested; **never run against a model** |
+| Corrected VLM inference and any conclusion from it | **Pending** |
+| Packaging, CI, larger evaluation | Not started |
 
-## Why a VLM?
+## Architecture and methodology
 
-Once a segmentation mask exists, tumor size is a solved problem — deterministic geometry (fit an ellipse, apply voxel spacing) gives a reliable, reproducible measurement, and that is exactly how this project's own reference measurements are produced (below). A VLM is not needed to measure a tumor that is already segmented.
+```
+KiPA22 NIfTI (CT + labels)
+   |
+   +--> label mask --> largest-tumor axial slice --> ellipse fit in mm --> reference major/minor (mm) + QC flag
+   |                    (src/measure_tumor.py, batch_measure.py, analyze_qc.py)             [valid]
+   |
+   +--> CT slice --> stored values -> HU (offset) --> HU window (40/400) --> 8-bit PNG
+                      (src/ct_preprocessing.py)  --> export validation (fails loudly if blank/invalid)
+                                   |
+                                   +--> pilot bundle (hash-pinned) --> Colab notebook --> MedGemma, prompts A/B
+                                        (validation/phase0_pilot5/)                       [implemented, not yet run]
+```
 
-This experiment asks a different, more speculative question: **can an off-the-shelf medical VLM infer a quantitative measurement directly from the raw image and a stated scale, without ever receiving a segmentation mask?** That's a meaningfully harder task — it requires the model to locate the tumor, judge its extent, and apply a scale conversion, all from pixels alone. Using a VLM here is a deliberate experiment testing whether that's currently feasible, not an assumption that a VLM is the best or right tool for tumor measurement.
+**Reference measurements.** For each case the kidney-tumor mask (label 4) is isolated and the axial slice with the
+largest tumor area is chosen. An ellipse is fit to that slice's tumor contour **in millimetre space** (contour points are
+scaled by the voxel spacing before fitting; scaling by different per-axis factors is not a similarity transform and can
+otherwise change axis lengths). The approach follows the one described for MedVision's ellipse-fitting pipeline; this
+repository is an independent implementation of it (MedVision source files are not included). A MedVision-style QC check (`pass_basic` vs `ellipse_outside_bbox`, a
+0.9x/1.1x bounding-box sanity test, plus multiple-component and minimum-size rules) flags fits that may be unreliable.
 
-## Methodology
+**VLM input image.** Stored intensities are converted to HU with a configurable offset, windowed with an abdominal
+soft-tissue window (center 40, width 400), and exported as 8-bit greyscale. No mask, outline or bounding box is ever
+drawn on a model input. Each export is validated (below) before it is saved.
 
-### Reference measurements
+**Experiments (original design, kept for the pilot).** A: the model sees the slice and is asked for the tumor's major and
+minor axis in mm, with no scale. B: the same, with the native pixel spacing stated in the prompt. Answers are requested as
+`<answer>{"major_mm": X, "minor_mm": Y}</answer>`, parsed and validated (finite, positive). Generation is deterministic
+(`do_sample=False`, `num_beams=1`, `max_new_tokens=300`). Prompts are identical to Milestone 6 (`m6-prompts-v1`).
+Planned metrics (not computed on valid data yet): MAE and relative error per axis, reported separately for scored and
+exploratory cases.
 
-For each case, the kidney-tumor mask (label 4) is isolated, and the axial slice with the largest tumor area is selected. An ellipse is fit to that slice's tumor contour **in real-world (mm) space** — contour points are scaled by the voxel spacing *before* fitting, not after, since scaling by different factors per axis is not a similarity transform and can otherwise change the fitted axis lengths and orientation. This mirrors the approach used in MedVision's own `medvision_ds.__fit_ellipses` pipeline. Major/minor axis lengths in millimeters are read directly off the fitted ellipse. A lightweight, MedVision-inspired QC check (`pass_basic` vs `ellipse_outside_bbox`, based on a 0.9×/1.1× bounding-box sanity check) flags fits that may be unreliable; only `pass_basic` cases are used for scoring.
+**Pilot design.** Five cases: scored 0, 6, 8 (`pass_basic`) and exploratory 2, 4 (`ellipse_outside_bbox`). Scored and
+exploratory cases are logged, saved and summarised separately and are never pooled. It is a smoke test of the pipeline
+and of model behaviour, not an accuracy study.
 
-### VLM input image
+## Implemented features and verified tests
 
-CT slices are windowed with a standard abdominal soft-tissue HU window (center=40, width=400) before being shown to the model — the same normalization radiologists use to view kidneys/soft tissue on a raw Hounsfield-Unit scan. No tumor mask, outline, or bounding box is drawn on the image; the model sees only what a radiologist would see on the raw slice, so it has to both locate and size the tumor unaided.
+| Component | What it does |
+|---|---|
+| [`src/ct_preprocessing.py`](src/ct_preprocessing.py) | Offset-aware HU conversion (float64, no `uint16` wraparound), windowing, and `validate_export` with content-aware checks (HU-window coverage, kidney/tumor ROI HU and grey ranges, integrity against the source) plus a generic grey-level backstop |
+| [`src/prepare_vlm_input.py`](src/prepare_vlm_input.py), [`src/prepare_vlm_batch.py`](src/prepare_vlm_batch.py) | Use the shared module, validate every export, `--intensity-offset` / `--output-dir` options |
+| [`src/validate_phase0_preprocessing.py`](src/validate_phase0_preprocessing.py) | Regenerates five representative cases with old-vs-corrected comparison, QC overlays (never model input), metrics |
+| [`validation/phase0_pilot5/pilot_lib.py`](validation/phase0_pilot5/pilot_lib.py) | SHA-256 bundle verification with a stale-image blocklist; run-metadata schema; single-use inference gate; write-ahead per-call logging; interruption and early-stop accounting; failure-preserving parsing; group-separated summaries |
+| [`validation/phase0_pilot5/build_pilot_bundle.py`](validation/phase0_pilot5/build_pilot_bundle.py) | Builds the hash-pinned bundle/ZIP and the Colab notebook (needs the dataset locally) |
+| [`validation/phase0_pilot5/phase0_pilot5.ipynb`](validation/phase0_pilot5/phase0_pilot5.ipynb) | Pilot notebook: fail-closed verification, metadata before inference, full raw logging. Contains no outputs and no credentials (token is read from a Colab secret) |
 
-### Experiment A — no pixel spacing
+**Tests (run in a clean clone of the published commit, without the dataset):**
 
-The model is shown the windowed slice and asked to estimate the tumor's major and minor axis in millimeters, with no scale information given.
-
-### Experiment B — explicit pixel spacing
-
-Identical prompt and image, except the case's true pixel spacing (e.g. "0.5859 mm × 0.5859 mm per pixel") is stated in the prompt.
-
-Both experiments require a structured response: `<answer>{"major_mm": X, "minor_mm": Y}</answer>`, parsed and validated (finite, > 0) before scoring. Generation is deterministic (`do_sample=False`, `num_beams=1`, fixed `max_new_tokens`), and the model is loaded once per Colab session and reused across all cases and both experiments.
-
-### Scored vs. exploratory cases
-
-5 cases (IDs 0, 3, 5, 6, 8) — all `pass_basic` QC, spanning a ~3.5× range of tumor sizes (16–57mm) — form the **scored** set used for every averaged statistic. One additional case (ID 2, flagged `ellipse_outside_bbox`) is run through the identical pipeline as an **exploratory** case, reported separately and excluded from all averages, since its own reference measurement is less trustworthy.
-
-### Evaluation metrics
-
-- **MAE** (mean absolute error, mm): average of `|predicted − reference|` across the major and minor axes.
-- **MRE** (mean relative error, %): average of `|predicted − reference| / reference` across both axes — normalizes error by tumor size, so a 5mm error means more on a 16mm tumor than a 57mm one.
-
-## Main results (n=5 scored cases)
-
-| | Experiment A (no spacing) | Experiment B (with spacing) |
+| Suite | Command | Result |
 |---|---|---|
-| Average MAE | 17.96 mm | 25.81 mm |
-| Average MRE | 51.3% | 87.5% |
-| Cases improved by spacing | — | 0 / 5 |
-| Cases worsened by spacing | — | 5 / 5 |
+| Preprocessing and validation | `python -m unittest discover -s tests` | 25 tests, all pass |
+| Pilot tooling | `python -m unittest discover -s validation/phase0_pilot5/tests` | 87 tests: 85 pass, 2 skipped (they need the locally built, CT-derived bundle) |
 
-**In this pilot, explicitly providing pixel spacing increased error on all 5 scored cases** — both MAE and MRE roughly doubled going from Experiment A to Experiment B.
+Covered: window formula and boundaries, input types and dtypes, `uint16` wraparound, rejection of wrong offsets and
+blank or near-constant images, stale-image rejection (even when a manifest is regenerated to match), gate failures
+(missing, invalid or mismatched metadata; existing logs; planted lock files), write-ahead logging, `KeyboardInterrupt` and
+early-stop accounting, rerun refusal, parse-failure preservation, and scored/exploratory separation. The pilot's GPU
+cells were exercised only with stub objects, **never with a real model**.
 
-## Important observation: repetitive predictions
+**Not verified:** the intensity offset itself; any behaviour of the real MedGemma processor on these images; anything
+about model accuracy.
 
-Looking at the raw predicted values (not just the error), a striking pattern emerges:
+## Reference measurements (valid)
 
-- **Experiment A returned the exact same prediction, `15.0mm × 10.0mm`, for all 6 cases** (all 5 scored + the exploratory case) — regardless of the case's true tumor size, which ranged from 16mm to 57mm.
-- **Experiment B returned `1.5mm × 1.0mm` — exactly 1/10th of Experiment A's answer — for 4 of the 6 cases.** The remaining two cases (IDs 6 and 8) deviated from that exact ratio, giving `10.5×5.5` and `11.5×11.5` respectively.
+Computed from ground-truth masks only (`results/batch_measurements.csv`); axes in mm on the largest-tumor axial slice.
 
-### Interpretation (stated carefully)
+| Case | Spacing (mm) | Slice | Major | Minor | QC flag |
+|---|---|---|---|---|---|
+| 0 | 0.5859 | 133 | 16.33 | 13.98 | pass_basic |
+| 1 | 0.6523 | 144 | 26.72 | 25.13 | pass_basic |
+| 2 | 0.7793 | 47 | 27.44 | 19.36 | ellipse_outside_bbox |
+| 3 | 0.6816 | 33 | 22.57 | 21.47 | pass_basic |
+| 4 | 0.5898 | 136 | 47.94 | 30.67 | ellipse_outside_bbox |
+| 5 | 0.5859 | 127 | 28.77 | 23.39 | pass_basic |
+| 6 | 0.7148 | 39 | 37.23 | 36.09 | pass_basic |
+| 7 | 0.6172 | 148 | 32.42 | 30.88 | ellipse_outside_bbox |
+| 8 | 0.5859 | 133 | 56.64 | 48.09 | pass_basic |
+| 9 | 0.6836 | 60 | 47.91 | 45.27 | ellipse_outside_bbox |
 
-This pattern is **descriptive, not a proven causal explanation**. What it does suggest: Experiment A's identical output across cases with visibly different images and different true tumor sizes is consistent with the model producing a generic, templated-looking guess rather than a measurement actually grounded in that image's content — at least under this exact zero-shot prompt and windowing setup. The suspiciously clean 10× relationship in most Experiment B cases raises the possibility that the model responded to the stated spacing value by scaling its answer down by a fixed factor rather than performing a genuine unit conversion — but the two cases that don't follow this exact ratio argue against a single deterministic rule, and no mechanism has been verified (e.g. by inspecting attention, trying reworded prompts, or testing on more cases).
+These are 2D ellipse-fit proxies, not clinician measurements. Four of ten cases fail the bounding-box QC rule; whether
+that rule is too strict for this data has not been investigated.
 
-**We do not claim that pixel spacing is generally harmful to VLM tumor-size estimation.** The honest summary is narrower: in this small pilot, explicit spacing increased error across all five scored cases, and the largely repetitive predictions across both experiments suggest weak image-grounded quantitative measurement under the specific zero-shot prompting setup tested here — not a general result about MedGemma, spacing information, or VLMs.
+## Development phases
 
-## Ways This Could Fail in Practice
+| Phase | Scope | Status |
+|---|---|---|
+| Milestones 1-4 | Data loading, reference measurement, batch measurement, QC diagnosis | Done |
+| Milestones 5-7 | Original VLM runs and analysis | **Invalid input images; withdrawn** |
+| Phase 0 | Audit, root cause, corrected preprocessing, validation tooling, tests, pilot pipeline | Done (pilot not run) |
+| Phase 0b | Run the five-case corrected smoke test; record offset provenance if it can be found | **Pending** |
+| Phase 1 | Reproducible packaging (pinned dependencies, CLI, CI) | Not started |
+| Phase 2 | Larger evaluation: more cases, prompt variants, a second model | Not started |
+| Phase 3 | Baselines (for example with the mask provided) and a written report | Not started |
 
-Framed as product risk, grounded in what this pilot actually observed:
+## Limitations, assumptions and future work
 
-- **Plausible-looking but ungrounded measurements.** A structured, well-formatted `{"major_mm": X, "minor_mm": Y}` answer looks trustworthy regardless of whether it reflects the actual image — as seen here, where Experiment A returned an identical answer for every case.
-- **Repetitive/default numeric answers.** A model can fall back to a generic-looking guess rather than a per-image measurement, as the identical `15×10mm` output across all 6 cases suggests may have happened.
-- **Misinterpreting scale information.** Providing pixel spacing did not reliably act as a unit-conversion factor here; in most cases the answer changed by a suspiciously clean 10× rather than in a way explainable by the stated spacing.
-- **Measuring the wrong structure.** With no mask or outline provided, nothing in this pipeline confirms the model was actually looking at the tumor rather than the kidney, an adjacent structure, or nothing specific at all.
-- **False precision from structured output.** Forcing a numeric JSON answer can manufacture an appearance of precision (e.g. "11.5mm") that isn't backed by genuine image-grounded measurement.
-- **Non-generalization.** Results come from one organ (kidney), one dataset (KiPA22), one model, and one prompt — performance on other organs, datasets, imaging modalities, or scanners is untested and cannot be assumed.
-- **Misplaced trust.** The biggest practical risk is a downstream user treating any of these numbers as clinically reliable simply because they're numeric and confidently formatted.
+- **The offset 1024 is unverified** (data constrain it only to about 1000-1040). If dataset documentation is found, update
+  the default and rerun.
+- **No valid VLM result exists yet.** Nothing here supports any claim about MedGemma.
+- **Effective-spacing mismatch.** Experiment B states the native pixel spacing (about 0.59-0.78 mm/px), but the model
+  receives an image resized to about 896x896 (public model card), where a pixel spans roughly 0.09-0.12 mm. The stated scale
+  does not describe the pixels the model sees. Prompts were kept unchanged for comparability, not because this is correct.
+- The checkpoint's preprocessor configuration is gated and unverified; the pilot records it at run time.
+- Crops are small (116-176 px) and tightly cut around the kidney region; the field of view is about 80-105 mm.
+- The local dataset zip holds 70 image/label pairs; the earlier README said 49. Only the first 10 cases were extracted.
+- Single organ, dataset and model; one prompt wording; one window; zero-shot only; no fine-tuning.
+- Reference values are single-slice 2D proxies; four of ten fail the QC rule.
+- The pilot has 3 scored cases and 2 exploratory ones: it can show whether outputs vary and parse, not how accurate they are.
+- GPU decoding is not guaranteed bit-reproducible; `transformers` is installed unpinned in Colab, so versions are recorded in
+  the run metadata instead.
 
-## Limitations
+**Future work:** run the pilot; find or establish intensity provenance; rerun the original questions on valid images with
+more cases; test prompts that state the spacing of the resized image; add mask-provided and pixel-measurement baselines;
+package with pinned dependencies and CI; consider the product framing below only after valid evidence exists.
 
-- **n=5 scored cases** — a pilot sample, not a statistically powered study. No claim here generalizes beyond this specific setup.
-- Single model (`medgemma-1.5-4b-it`), single prompt phrasing, single windowing/normalization choice, single dataset (KiPA22, kidney tumors only) — all of these are unexplored variables that could change the outcome.
-- Reference measurements come from an ellipse fit to a single 2D slice, not a clinician's read — a reasonable proxy, but not clinical ground truth.
-- The repetitive-prediction pattern is an observation from 6 cases; it has not been mechanistically explained or verified with larger-scale or ablation testing.
-- Zero-shot only — no fine-tuning, no chain-of-thought reasoning was requested or relied upon (only the structured final answer was scored, though full raw responses were saved for transparency).
+**Design position (not a result).** Where a mask is available, deterministic geometry is more auditable than a VLM
+estimate. A VLM is more plausibly a supporting layer (explanation, flagging disagreement for human review) than the source
+of truth for measurements. Production use would need validated ground truth, clinician review and regulatory consideration,
+tracked with accuracy, parse-failure and repeated-answer rates, disagreement with deterministic measurements, drift, and
+full audit logs of prompts, model versions and raw outputs.
 
-## What I Would Ship
+## Setup and reproduction
 
-Based on this pilot's evidence, **I would not ship zero-shot VLM tumor measurement as the primary measurement engine.** Where a segmentation mask is available (or obtainable), deterministic geometry is the safer, more reliable, and fully auditable quantitative path — it's what this project itself uses for reference measurements, and nothing here outperforms it.
-
-A VLM may still have a legitimate role, but as a **supporting layer rather than the measurement source of truth** — for example: generating a plain-language explanation of a measurement already computed deterministically, assisting a clinician's workflow (e.g. drafting a report section for review), or flagging cases where its own estimate disagrees sharply with a deterministic measurement for human follow-up. This is a product decision driven by observed reliability in this pilot, not a claim that VLMs are inherently incapable of this task — a different model, prompt, fine-tuning approach, or larger evaluation could change this conclusion.
-
-## Production Metrics and Governance
-
-If a system like this moved toward production, I would track:
-
-- **Accuracy**: MAE / MRE against a trusted reference measurement.
-- **Reliability**: parse success/failure rate, and rate of repeated/default-looking answers (this pilot's biggest red flag).
-- **Safety net**: disagreement rate against deterministic or clinician measurements; clinician override/review rate.
-- **Operations**: latency per case, compute/API cost per case.
-- **Drift**: performance stability across sites, scanners, and patient populations over time.
-- **Auditability**: full logging of raw model output, prompt version, and model/version used per prediction — so any measurement can be traced back to exactly what produced it.
-
-## Reproducibility
-
-Requires Python 3.11+ (project developed on 3.14.6) for all local steps; VLM inference requires a Colab GPU session (free T4 tier is sufficient) since it isn't run locally.
+Developed and tested on macOS with Python 3.14.7; other versions are untested.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+
+# Tests (no dataset needed)
+python -m unittest discover -s tests
+python -m unittest discover -s validation/phase0_pilot5/tests
 ```
 
-Pipeline, in order:
-1. `src/load_sample.py` — downloads KiPA22's `train.zip` (~400MB, cached), extracts one case, prints its fields, saves a sanity-check overlay.
-2. `src/measure_tumor.py` — fits the reference ellipse for that one case, reports major/minor axis in mm.
-3. `src/batch_measure.py` — repeats the measurement across a 10-case batch, applies the QC flag, writes `results/batch_measurements.csv`.
-4. `src/analyze_qc.py` — diagnoses the QC-flagged cases (`results/qc_analysis.csv`, `outputs/qc_analysis/`).
-5. `src/prepare_vlm_input.py` / `src/prepare_vlm_batch.py` — window and export the CT slice(s) shown to the VLM, plus a metadata/zip bundle for Colab upload.
-6. `notebooks/milestone5_vlm_case0.ipynb` / `notebooks/milestone6_vlm_batch5.ipynb` — run in Google Colab (free T4 GPU) to perform the actual VLM inference; requires a Hugging Face token supplied via Colab secrets (never hardcoded) and acceptance of MedGemma's usage terms.
-7. `src/analyze_vlm_batch5.py` — analyzes the completed VLM batch results, produces the comparison table and figures below.
+**Data.** The scripts need KiPA22 (about 400 MB, `YongchengYAO/KiPA22` on Hugging Face, CC BY-NC-4.0). `src/load_sample.py`
+downloads it into `data/` (git-ignored). Check the terms before use or redistribution; see the licensing section.
+
+**Reference measurements** (run from `src/`; paths are relative to the repo):
+
+```bash
+cd src
+python load_sample.py        # download + inspect one case
+python measure_tumor.py      # reference ellipse for that case
+python batch_measure.py      # 10 cases -> results/batch_measurements.csv
+python analyze_qc.py         # QC diagnosis -> results/qc_analysis.csv
+```
+
+**Corrected preprocessing and validation** (writes to git-ignored `validation/phase0/`):
+
+```bash
+python src/validate_phase0_preprocessing.py                      # default offset 1024 (unverified); needs the cases extracted by batch_measure.py
+python src/prepare_vlm_input.py --intensity-offset 1024 --output-dir /tmp/check
+```
+
+**Pilot (not yet run).** `python validation/phase0_pilot5/build_pilot_bundle.py` builds the bundle, ZIP and a notebook with the
+hashes of *your* build pinned inside it (the committed notebook pins the author's local build, which is not published).
+Follow [`validation/phase0_pilot5/README_pilot.md`](validation/phase0_pilot5/README_pilot.md). Running it uploads CT-derived
+images to Google Colab and needs a Hugging Face token with accepted MedGemma terms; read the data-handling notes first.
 
 ## Repository structure
 
 ```
-src/                    Analysis/preprocessing scripts (run locally, no GPU needed)
-notebooks/              Colab notebooks (VLM inference; needs a GPU)
-data/                   Downloaded/extracted case data (gitignored — not committed)
-results/                CSV outputs: reference measurements, QC analysis, VLM predictions
-outputs/                Figures, windowed images, raw model responses
-  ├── batch_examples/       Example reference-measurement visualizations
-  ├── qc_analysis/          QC diagnostic visualizations
-  ├── vlm_case0/             Milestone 5 single-case VLM smoke test
-  └── vlm_batch5/            Milestone 6 batch VLM results + Milestone 7 analysis
-      └── analysis/              Final comparison figures and findings (below)
+src/                        Preprocessing, reference measurement, QC, validation (run locally, no GPU)
+tests/                      Unit tests for preprocessing and validation
+validation/phase0_pilot5/   Pilot library, bundle builder, notebook, tests, pilot README
+notebooks/                  ORIGINAL Milestone 5-6 Colab notebooks (their results are invalid; see above)
+results/ , outputs/         Original outputs, preserved unmodified; VLM-derived files are INVALID (see notices)
+docs/PHASE0_AUDIT.md        Evidence for the invalid images, the fix, and what is unverified
+data/                       Local data (git-ignored)
 ```
 
-## Key figures
+## Licensing, data and model terms
 
-- `outputs/vlm_batch5/analysis/overall_avg_comparison.png` — average MAE/MRE, Experiment A vs B
-- `outputs/vlm_batch5/analysis/mae_per_case.png` — per-case MAE, A vs B
-- `outputs/vlm_batch5/analysis/mre_per_case.png` — per-case MRE, A vs B
-- `outputs/vlm_batch5/analysis/ref_vs_pred.png` — reference vs. predicted tumor size, all cases
+- **Code:** [MIT](LICENSE) (c) 2026 Chamodi Senevirathna. This license covers this repository's code and documentation only.
+  **It grants no rights to the dataset or to the model.** Dependencies are permissively licensed (for example nibabel MIT,
+  numpy BSD-3-Clause, OpenCV Apache-2.0, huggingface_hub Apache-2.0, Pillow MIT-CMU, matplotlib PSF-style).
+- **Dataset:** KiPA22, redistributed via MedVision on Hugging Face under **CC BY-NC-4.0** (non-commercial, attribution). You must
+  download it yourself and comply with its terms. This repository does not include the dataset.
+- **CT-derived images are intentionally not distributed with new work.** The CT-derived validation images, pilot bundle/ZIP
+  and run folders are git-ignored. Earlier commits already contain some CT-derived figures under `outputs/` (overlays and QC
+  figures); whether redistributing those is permitted under the dataset's terms has **not been confirmed**. Do not assume reuse
+  rights for them.
+- **Model:** `google/medgemma-1.5-4b-it` is gated on Hugging Face; you must accept its terms yourself. They are separate from
+  this repository's license.
+- **MedVision** (CC BY 4.0) is credited for the ellipse-fitting and QC methodology this work follows; MedVision source files
+  are not included. Its license also requires downstream use to comply with each source dataset's terms.
 
-![Overall MAE/MRE comparison](outputs/vlm_batch5/analysis/overall_avg_comparison.png)
-![Reference vs predicted major axis](outputs/vlm_batch5/analysis/ref_vs_pred.png)
+## Intended use and boundaries
 
-## Conclusion
+A research and portfolio prototype. It is **not** clinically validated, not for diagnosis, staging or treatment decisions, not a
+replacement for a radiologist's or a deterministic algorithm's measurement, and not suitable for autonomous reporting.
 
-In this small pilot, an off-the-shelf medical VLM's zero-shot tumor-size estimates did not benefit from being told the CT slice's pixel spacing — error increased on every scored case — and the largely repetitive predictions across both experiments suggest the model's answers were only weakly grounded in each image's actual content under this prompting setup. The pipeline built here (reference measurement → windowed VLM input → structured prediction → scored comparison) is reusable for a larger, better-powered follow-up before drawing any general conclusion.
+## AI assistance and acknowledgements
 
-## Ownership / Role
-
-I defined this project end to end: selected the research question, chose the dataset and model, and designed the A/B experiment (scored vs. exploratory cases, MAE/MRE metrics, deterministic generation settings). I built and validated the reference-measurement and QC workflow, inspected the raw model outputs for failure patterns, and interpreted the results — including deciding how far the findings could and couldn't be generalized. I used AI coding assistance during implementation, but reviewed, tested, and validated the methodology, code, outputs, and conclusions myself; the analysis and product judgments in this README are mine.
+This repository was developed with AI coding assistance (Claude Code). The Phase 0 audit, correction, tests and pilot tooling
+were produced in AI-assisted sessions; outputs and claims here should be checked against the code and tests, which is why
+unverified items are listed explicitly. Thanks to the KiPA22 challenge organisers, the MedVision project (Yongcheng Yao et al.)
+for the redistributed data and methodology, and Google for the open MedGemma models.
