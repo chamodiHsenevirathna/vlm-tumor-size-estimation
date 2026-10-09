@@ -5,8 +5,9 @@ Build the isolated Phase 0 five-case pilot bundle. Writes ONLY inside validation
   pilot5_images.zip       deterministic zip of bundle/ (this is what gets uploaded to Colab)
   phase0_pilot5.ipynb     pilot notebook with the manifest and pilot_lib hashes PINNED inside it
 
-Reads (never writes) data/batch_cases/, results/batch_measurements.csv, and the stale exports under
-outputs/ (hashed only, to build the stale-image blocklist). No inference, no network, no uploads.
+Reads (never writes) data/batch_cases/, results/batch_measurements.csv, and stale_blocklist.json (committed SHA-256s of the
+blank original exports). If the original exports still exist locally under outputs/ they are re-hashed and must agree with
+the JSON; the build aborts otherwise. No inference, no network, no uploads.
 Every image is validated with the shared ct_preprocessing checks (content-aware + generic) before it
 is written; any failure aborts the build.
 """
@@ -15,6 +16,7 @@ import ast
 import csv
 import datetime
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -39,9 +41,32 @@ EXTRACT_DIR = REPO / "data" / "batch_cases"
 BATCH_CSV = REPO / "results" / "batch_measurements.csv"
 STALE_FILES = [REPO / "outputs" / "vlm_batch5" / f"case_{c}_slice.png" for c in ("0", "2", "3", "5", "6", "8")] + [
     REPO / "outputs" / "vlm_case0" / "slice_windowed.png"]
+STALE_JSON = HERE / "stale_blocklist.json"
+MIN_STALE_HASHES = 5
 KIDNEY, TUMOR = 2, 4
 RESIZE_PX = 896  # per the public MedGemma model card; the checkpoint's own preprocessor config was not accessible
 
+
+
+def load_stale_blocklist(json_path: Path = STALE_JSON, local_files=STALE_FILES) -> list:
+    """Return the validated stale-image SHA-256 blocklist, or raise (fail closed).
+
+    The committed JSON is authoritative. Any original export still present locally is re-hashed and must be IN the JSON;
+    a local file whose hash is missing from it means the blocklist is incomplete or wrong, so the build aborts."""
+    try:
+        data = json.loads(Path(json_path).read_text())
+        hashes = data["sha256"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise RuntimeError(f"stale-image blocklist unreadable ({json_path}): {exc!r}") from exc
+    if not isinstance(hashes, list) or not all(isinstance(h, str) and re.fullmatch(r"[0-9a-f]{64}", h) for h in hashes):
+        raise RuntimeError("stale-image blocklist must be a list of lowercase 64-hex SHA-256 strings")
+    if len(set(hashes)) != len(hashes) or len(hashes) < MIN_STALE_HASHES:
+        raise RuntimeError(f"stale-image blocklist needs >= {MIN_STALE_HASHES} distinct hashes, got {len(set(hashes))}")
+    local = {pl.sha256_file(p) for p in local_files if Path(p).exists()}
+    unknown = sorted(local - set(hashes))
+    if unknown:
+        raise RuntimeError(f"local original exports are not in the committed blocklist: {[h[:12] for h in unknown]}")
+    return sorted(hashes)
 
 
 def git(*args) -> str:
@@ -419,9 +444,7 @@ def main() -> None:
         print(f"case {cid} [{case['group']}] {case['size_px']} sha={case['sha256'][:12]} coverage={case['build_content_metrics']['window_coverage']:.2f}")
 
     shutil.copyfile(HERE / "pilot_lib.py", BUNDLE_DIR / "pilot_lib.py")
-    stale = sorted({pl.sha256_file(p) for p in STALE_FILES if p.exists()})
-    if len(stale) < 5:
-        raise RuntimeError(f"expected stale reference exports under outputs/, found {len(stale)} distinct hashes")
+    stale = load_stale_blocklist()
 
     status = git("status", "--porcelain")
     manifest = pl.assemble_manifest(

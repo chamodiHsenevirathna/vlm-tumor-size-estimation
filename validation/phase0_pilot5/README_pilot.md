@@ -22,11 +22,12 @@ Nothing here replaces, edits or supersedes the existing Milestone 5/6/7 results,
 
 ```
 build_pilot_bundle.py   builds bundle/, pilot5_images.zip and phase0_pilot5.ipynb (hashes pinned in the notebook)
+stale_blocklist.json    SHA-256 of the blank original exports (hashes only; images are not published); read by the builder, which fails closed if it is missing, malformed or contradicted by a local original
 pilot_lib.py            verification, prompts, parsing, metadata schema, logging (no GPU deps; unit-tested)
 bundle/                 manifest.json, pilot_lib.py, images/case_{id}_slice_off1024.png  (zip contents)
 pilot5_images.zip       the only file uploaded to Colab
 phase0_pilot5.ipynb     the pilot notebook
-tests/test_pilot_lib.py unit tests
+tests/                  unit tests (test_pilot_lib.py, test_stale_blocklist.py)
 runs/<run_id>/          (create after a run) downloaded run output goes here
 ```
 

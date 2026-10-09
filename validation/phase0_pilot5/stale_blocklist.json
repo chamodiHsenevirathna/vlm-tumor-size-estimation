@@ -1,0 +1,11 @@
+{
+  "description": "SHA-256 of the six distinct blank (saturated-white, offset-0) images exported by the original, invalid Milestone 5-6 runs. Hashes only: the images themselves are not published. The pilot builder pins these in every manifest so stale images are rejected.",
+  "sha256": [
+    "186e9061cf09bc4fc6e913e5756b0fb4469e83823ed87d4e050081682cfc3849",
+    "1c1833c9389efc85f624652fc9c1710f1ec292ebd36f43f8d26da383be4cc78a",
+    "1f42141de41680e4be86354ebb6fec132cfdbafbea470417fa8004ffc3ee1387",
+    "6d33bbd4301c4cb93f1a71057a8e5e0142d4b50152eb66982e82af6ce4ba79b8",
+    "9d9f405f8b3231f8779a0d77a3829e48c3a0a3263fee4dd8ea5ae9958b98cc2f",
+    "a9b8a077e9c10b19584ea2b2a56484634c42a186185f8a563888369f014bc068"
+  ]
+}
