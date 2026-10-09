@@ -210,7 +210,7 @@ def analyze_case(case_id: str) -> dict:
         "violating_endpoints": violating_str,
         "violation_type": "inside_shrunk_box (fit too small)" if detail["all_inside_shrunk"]
         else ("outside_enlarged_box (fit too big/off)" if detail["violating"] else "none"),
-        "viz_path": str(out_path),
+        "viz_path": out_path.relative_to(REPO_ROOT).as_posix(),
     }
 
 
