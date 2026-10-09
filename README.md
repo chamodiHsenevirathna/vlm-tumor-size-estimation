@@ -15,7 +15,8 @@ preprocessing and experiment harness, and an honest account of a first experimen
 [What went wrong](#what-went-wrong-and-how-it-was-identified) · [Architecture](#architecture-and-workflow) ·
 [Engineering decisions](#engineering-decisions-and-risk-management) · [Reference measurements](#reference-measurements-and-their-limitations) ·
 [Testing](#testing-and-validation) · [Roadmap](#roadmap) · [Setup](#setup-and-reproduction) ·
-[Data, licensing and limitations](#data-model-licensing-limitations-and-intended-use)
+[Data, licensing and limitations](#data-model-licensing-limitations-and-intended-use) ·
+[Lessons](#what-i-learned) · [History notes](docs/HISTORY.md)
 
 ## Overview
 
@@ -41,20 +42,20 @@ This project applies business analysis principles to AI research through explici
 requirements, validation criteria, risk management, traceability, and evidence-based decision-making. Concretely, the research
 questions above are the problem definition; "model inputs must be non-blank and plausible HU" became enforced validation rules;
 risks (stale inputs, incomplete metadata, lost partial runs, pooled scored and exploratory results) each map to a control in the
-[decisions table](#engineering-decisions-and-risk-management); and the status table tags each area as verified, implemented, hypothesis or planned. It is a research prototype:
+[decisions table](#engineering-decisions-and-risk-management); and the status table tags each area as verified, implemented, hypothesis, invalid or planned. It is a research prototype:
 it has no production deployment, no user requirements gathered from clinicians, and no clinical validation.
 
 ## Current status
 
 Tags used below: **[Verified]** covered by automated tests or direct inspection · **[Implemented]** built, not exercised on a
-real model · **[Hypothesis]** plausible but unconfirmed · **[Planned]** not started.
+real model · **[Hypothesis]** plausible but unconfirmed · **[Invalid]** produced from faulty inputs; withdrawn · **[Planned]** not started.
 
 | Area | Status |
 |---|---|
 | Reference measurement from masks, QC flagging, 10 cases | **[Verified]** valid; 2D proxies, see limitations |
-| Original VLM experiment (Milestones 5-7) | **Invalid** (blank input images); preserved, with notices |
+| Original VLM experiment (Milestones 5-7) | **[Invalid]** (blank input images); preserved, with notices |
 | Root cause of the invalid images | **[Verified]** by inspection of data and outputs |
-| Corrected CT preprocessing and export validation | **[Verified]** by 25 unit tests |
+| Corrected CT preprocessing and export validation | **[Verified]** by automated tests (27 in `tests/`) |
 | CT intensity offset `stored = HU + 1024` | **[Hypothesis]** fits the data; not confirmed by any documentation |
 | Five-case pilot pipeline (bundle, gate, logging, notebook) | **[Implemented]** unit-tested and dry-run with stubs; **never run against a model** |
 | Corrected VLM inference, and any conclusion from it | **[Planned]** pending |
@@ -107,7 +108,7 @@ KiPA22 NIfTI (CT + labels)
 |---|---|---|
 | Reject invalid exports (`InvalidImageError`) with content-aware checks (HU-window coverage, kidney/tumor ROI HU, integrity against the source) plus a generic backstop | The original failure was silent; grey-level statistics alone could be gamed or misleading. A wrong offset is caught by window coverage even with all generic thresholds disabled (tested) | Thresholds were tuned on 10 local cases and could reject unusual but valid data |
 | Offset is a parameter, recorded as `UNVERIFIED` in every manifest and run record | No provenance exists; hiding the assumption would repeat the original mistake | Results will depend on a hypothesis (about +/-24 HU) |
-| Preserve the audit trail: original outputs untouched, plus notices and an audit document | Transparency about what failed; nothing is quietly rewritten | Invalid text and CSV artifacts remain in the repo and history, so readers must follow the notices; the blank input images and CT-derived figures were removed from the published history (see `docs/HISTORY.md`) |
+| Preserve the audit trail: original outputs unmodified where published, plus notices and an audit document | Transparency about what failed; nothing is quietly rewritten | Invalid text and CSV artifacts remain in the repo and history, so readers must follow the notices; the blank input images and CT-derived figures were removed from the published history (see `docs/HISTORY.md`) |
 | Separate scored and exploratory cases (separate files and summaries; `require_scored_only` guard; no pooled statistic) | Exploratory cases have a QC-flagged reference and must not leak into scored numbers | Only 3 scored cases |
 | Hash-pinned bundle with a stale-image blocklist; verification repeated before inference | Makes it hard to feed old blank images to the model, even if a manifest is regenerated | The notebook must be rebuilt per machine (it pins the author's local build) |
 | Single-use inference gate: metadata must be valid, persisted and identical to memory; a run folder cannot be reused | Prevents running with incomplete metadata or appending a second pass to an old run | A repeat run needs a new run folder |
@@ -136,8 +137,8 @@ Run in a clean clone of the published commit, with no dataset and no local bundl
 
 | Suite | Command | Result |
 |---|---|---|
-| Preprocessing and validation | `python -m unittest discover -s tests` | 25 tests, all pass |
-| Pilot harness | `python -m unittest discover -s validation/phase0_pilot5/tests` | 87 tests: 85 pass, 2 skipped (need the local, CT-derived bundle); all 87 pass where the bundle exists |
+| Preprocessing and validation | `python -m unittest discover -s tests` | 27 tests, all pass |
+| Pilot harness | `python -m unittest discover -s validation/phase0_pilot5/tests` | 93 tests: 90 pass, 3 skipped (they need the local CT-derived bundle or the original blank exports, which are not published) |
 
 **Covered:** window formula and boundaries; dtypes and `uint16` wraparound; rejection of wrong offsets and blank or near-constant
 images; stale-image rejection, including when a manifest is regenerated to match; gate failures (missing, invalid or mismatched
@@ -146,6 +147,14 @@ detection; rerun refusal; parse-failure preservation; scored/exploratory separat
 
 **Not verified:** the intensity offset itself; the notebook's real model, processor and GPU cells (exercised only with stubs);
 how Gemma's processor resizes these small crops; any model behaviour or accuracy.
+
+## What I learned
+
+- **Validate inputs before inference.** The failure was silent: the model "answered" blank images, and the numbers looked plausible. Content-aware checks on every export would have stopped it.
+- **Look at the data and the artefacts.** A file-size anomaly (222-553 byte PNGs) and the volume's own histogram pointed to the cause.
+- **Treat unverified assumptions as parameters.** The intensity offset is configurable and labelled `UNVERIFIED` rather than hard-coded as fact.
+- **Withdraw invalid results openly.** The invalid outputs are labelled and explained, not deleted or re-spun, and the history changes made for publication are documented in [`docs/HISTORY.md`](docs/HISTORY.md).
+- **Small samples limit what can be claimed.** The planned pilot is a smoke test; three scored cases cannot support an accuracy claim.
 
 ## Roadmap
 
@@ -188,7 +197,8 @@ src/                        Preprocessing, reference measurement, QC, validation
 tests/                      Preprocessing and validation tests
 validation/phase0_pilot5/   Pilot library, bundle builder, notebook, tests, pilot README
 notebooks/                  ORIGINAL Milestone 5-6 notebooks (their results are invalid)
-results/ , outputs/         Original outputs; VLM-derived files are INVALID (see NOTICE files). CT-derived figures and blank slice images are not published
+results/ , outputs/         Original outputs; VLM-derived files are INVALID (see NOTICE files). CT-derived figures and blank slice images are not published.
+                            The charts in outputs/vlm_batch5/analysis/ plot the INVALID results (blank or incorrect input images); do not cite them.
 docs/PHASE0_AUDIT.md        Evidence, the fix, and what remains unverified
 ```
 
@@ -200,8 +210,7 @@ docs/PHASE0_AUDIT.md        Evidence, the fix, and what remains unverified
 - **Effective-spacing mismatch:** Experiment B states the native spacing (about 0.59-0.78 mm/px), but the model receives an image
   resized to about 896x896 (public model card), where a pixel spans roughly 0.09-0.12 mm.
 - The checkpoint's preprocessor configuration is gated and unverified; the pilot records it at run time.
-- Crops are small (116-176 px, field of view about 80-105 mm). The local zip holds 70 image/label pairs (an earlier README said
-  49); only the first 10 were examined.
+- Crops are small (116-176 px, field of view about 80-105 mm). The local zip holds 70 image/label pairs; only the first 10 were examined.
 - One organ, dataset, model, prompt wording and window; zero-shot only; GPU decoding is not guaranteed bit-reproducible.
 - **Design position, not a result:** where a mask exists, deterministic geometry is more auditable than a VLM estimate; a VLM is
   more plausibly a supporting layer than the source of truth.
@@ -209,7 +218,7 @@ docs/PHASE0_AUDIT.md        Evidence, the fix, and what remains unverified
 **Licensing and terms**
 
 - **Code:** [MIT](LICENSE), covering this repository's code and documentation only. **It grants no rights to the dataset or the model.**
-  Dependencies are permissively licensed.
+  Dependency licenses (see `requirements.txt`) have not been individually reviewed; check them before redistributing.
 - **Dataset:** KiPA22, redistributed through MedVision on Hugging Face under **CC BY-NC-4.0**. It is not included here. You must
   download it yourself and comply with its terms.
 - **CT-derived images:** new CT-derived validation images, pilot bundles and run folders are git-ignored. The CT-derived figures and

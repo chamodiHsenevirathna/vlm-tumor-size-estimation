@@ -51,6 +51,7 @@ from the source data. The four numeric charts in `outputs/vlm_batch5/analysis/` 
 - **All commit hashes changed** (the trees changed). The table maps old to new. Hashes quoted before 2026-10-10 do not resolve here.
 - **The signature on the initial commit was lost.** It was made in the GitHub web editor (committer `GitHub`) and signed by GitHub; any rewrite
   invalidates it. Its author, dates and message are unchanged.
+- The first four commits are dated 2026-08-10 and the next five 2026-10-10; this is the real gap between the original study and its later audit and correction, and the dates are unchanged.
 - Early commits therefore do not contain the figures that the original README and notices mention; the notices were updated.
 
 ## Commit map
