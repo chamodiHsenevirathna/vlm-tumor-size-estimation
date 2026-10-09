@@ -6,6 +6,8 @@ non-blank CT images and records exactly how MedGemma behaves, with full raw logg
 
 Nothing here replaces, edits or supersedes the existing Milestone 5/6/7 results, notebooks, README or conclusions.
 
+The builder has not been exercised end to end against the dataset since the stale-blocklist change: the blocklist loader and its tests pass, but a full bundle build is unverified because the dataset is not available in the clean clone.
+
 ## Known limitations (also recorded in `manifest.json` and `run_metadata.json`)
 
 - **Intensity offset 1024 is an UNVERIFIED hypothesis** (stored = HU + 1024). No dataset documentation confirms it;

@@ -190,7 +190,7 @@ python src/validate_phase0_preprocessing.py                       # corrected ex
 
 **Pilot (not yet run).** `python validation/phase0_pilot5/build_pilot_bundle.py` builds a bundle and a notebook pinned to
 *your* build. Follow the [pilot README](validation/phase0_pilot5/README_pilot.md). Running it uploads CT-derived images to
-Google Colab and needs a Hugging Face token with accepted MedGemma terms, so read its data-handling notes first.
+Google Colab and needs a Hugging Face token with accepted MedGemma terms, so read its data-handling notes first. The builder has not been exercised end to end against the dataset since the stale-blocklist change: the blocklist loader and its tests pass, but a full bundle build is unverified because the dataset is not available in the clean clone.
 
 ```
 src/                        Preprocessing, reference measurement, QC, validation (local, no GPU)
