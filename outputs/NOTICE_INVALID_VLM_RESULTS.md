@@ -9,7 +9,7 @@ conclusions written in `vlm_batch5/analysis/milestone7_findings.md` are **not su
 `vlm_case0/slice_windowed.png`) and the reference-measurement figures (`batch_examples/`, `qc_analysis/`,
 `sample_overlay.png`, `tumor_size_measurement.png`) were removed from the published history. The figures show CT slices
 derived from KiPA22 (CC BY-NC-4.0), and their redistribution status has **not been confirmed**. The author keeps local
-copies. The reference measurements themselves (`results/*.csv`) come from ground-truth masks and are not affected by the bug.
+copies. Only `results/batch_measurements.csv` and `results/qc_analysis.csv` (reference and QC measurements from ground-truth masks) are unaffected by the bug; the other files in `results/` are invalid (see `results/NOTICE_INVALID_VLM_RESULTS.md`).
 
 Details and evidence: [`docs/PHASE0_AUDIT.md`](../docs/PHASE0_AUDIT.md). What was removed and why:
 [`docs/HISTORY.md`](../docs/HISTORY.md).

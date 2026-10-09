@@ -1,3 +1,5 @@
+> **WARNING: INVALID RESULTS. DO NOT CITE.** Everything below, and the charts in this folder, describes how MedGemma answered **blank (saturated-white) input images** produced by a CT intensity-preprocessing bug. The findings say nothing about MedGemma, pixel spacing or tumor-size estimation, and are **withdrawn**. The text is preserved unchanged for transparency. See [`docs/PHASE0_AUDIT.md`](../../../docs/PHASE0_AUDIT.md) and [`../../NOTICE_INVALID_VLM_RESULTS.md`](../../NOTICE_INVALID_VLM_RESULTS.md).
+
 # Milestone 7 — VLM batch analysis findings
 
 Source of truth: `results/vlm_batch5_results.csv` and `results/vlm_batch5_summary.csv` from the completed Milestone 6 batch (5 scored cases + 1 exploratory case, `google/medgemma-1.5-4b-it`, deterministic generation). No inference was rerun to produce this analysis.
