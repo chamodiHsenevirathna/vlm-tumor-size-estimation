@@ -5,7 +5,9 @@ files (data/batch_cases/) and Milestone 3's reference measurements
 (results/batch_measurements.csv) -- no re-download, no new reference values.
 
 Same HU windowing as Milestone 5 (center=40, width=400, abdominal soft-tissue
-window), no tumor overlay/outline/bbox/scale bar -- identical image style,
+window) applied via ct_preprocessing (stored intensities are converted to HU
+first using a configurable, unverified offset -- see ct_preprocessing.py; every
+export is validated before saving), no tumor overlay/outline/bbox/scale bar -- identical image style,
 just applied per-case instead of to a single case.
 
 Also writes a small metadata CSV (case_id, scored, slice_idx, pixel_spacing_mm,
@@ -14,6 +16,7 @@ so the reference values used for scoring always come straight from
 batch_measurements.csv, never retyped by hand.
 """
 
+import argparse
 import ast
 import csv
 import zipfile
@@ -23,25 +26,27 @@ import nibabel as nib
 import numpy as np
 from PIL import Image
 
+from ct_preprocessing import (
+    DEFAULT_INTENSITY_OFFSET,
+    DEFAULT_WINDOW_CENTER,
+    DEFAULT_WINDOW_WIDTH,
+    validate_export,
+    window_ct_slice,
+)
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BATCH_CSV = REPO_ROOT / "results" / "batch_measurements.csv"
 EXTRACT_DIR = REPO_ROOT / "data" / "batch_cases"
 OUTPUT_DIR = REPO_ROOT / "outputs" / "vlm_batch5"
 
-WINDOW_CENTER = 40
-WINDOW_WIDTH = 400
+WINDOW_CENTER = DEFAULT_WINDOW_CENTER
+WINDOW_WIDTH = DEFAULT_WINDOW_WIDTH
+TUMOR_LABEL = 4
+KIDNEY_LABEL = 2
 
 SCORED_CASE_IDS = ["0", "3", "5", "6", "8"]
 EXPLORATORY_CASE_IDS = ["2"]
 ALL_CASE_IDS = SCORED_CASE_IDS + EXPLORATORY_CASE_IDS
-
-
-def apply_hu_window(slice_hu: np.ndarray, center: float, width: float) -> np.ndarray:
-    low = center - width / 2.0
-    high = center + width / 2.0
-    clipped = np.clip(slice_hu, low, high)
-    scaled = (clipped - low) / (high - low) * 255.0
-    return scaled.astype(np.uint8)
 
 
 def load_batch_reference() -> dict:
@@ -66,26 +71,40 @@ def load_batch_reference() -> dict:
     return ref
 
 
-def prepare_case_image(case_id: str, slice_idx: int) -> Path:
+def prepare_case_image(case_id: str, slice_idx: int, output_dir: Path, intensity_offset: float) -> Path:
     image_path = EXTRACT_DIR / "image" / f"{case_id}.nii.gz"
-    image = nib.load(str(image_path)).get_fdata()
-    slice_hu = image[:, :, slice_idx]
-    windowed = apply_hu_window(slice_hu, WINDOW_CENTER, WINDOW_WIDTH).T
+    label_path = EXTRACT_DIR / "label" / f"{case_id}.nii.gz"
+    slice_raw = np.asanyarray(nib.load(str(image_path)).dataobj[:, :, slice_idx])  # stored values, unscaled
+    label_slice = np.asanyarray(nib.load(str(label_path)).dataobj[:, :, slice_idx])
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    out_path = OUTPUT_DIR / f"case_{case_id}_slice.png"
-    Image.fromarray(windowed, mode="L").save(out_path)
+    windowed = window_ct_slice(slice_raw, intensity_offset, WINDOW_CENTER, WINDOW_WIDTH)
+    validate_export(
+        windowed, slice_raw,
+        intensity_offset=intensity_offset, center=WINDOW_CENTER, width=WINDOW_WIDTH,
+        kidney_mask=label_slice == KIDNEY_LABEL, tumor_mask=label_slice == TUMOR_LABEL,
+    )
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    out_path = output_dir / f"case_{case_id}_slice.png"
+    Image.fromarray(windowed.T, mode="L").save(out_path)
     return out_path
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--intensity-offset", type=float, default=DEFAULT_INTENSITY_OFFSET,
+                        help="stored = HU + offset (default %(default)s; unverified hypothesis)")
+    parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
+    args = parser.parse_args()
+    output_dir = args.output_dir
+
     reference = load_batch_reference()
 
     metadata_rows = []
     image_paths = []
     for case_id in ALL_CASE_IDS:
         info = reference[case_id]
-        out_path = prepare_case_image(case_id, info["slice_idx"])
+        out_path = prepare_case_image(case_id, info["slice_idx"], output_dir, args.intensity_offset)
         image_paths.append(out_path)
         metadata_rows.append({
             "case_id": case_id,
@@ -98,13 +117,13 @@ def main() -> None:
             "image_filename": out_path.name,
         })
 
-    metadata_path = OUTPUT_DIR / "batch_metadata.csv"
+    metadata_path = output_dir / "batch_metadata.csv"
     with open(metadata_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=list(metadata_rows[0].keys()))
         writer.writeheader()
         writer.writerows(metadata_rows)
 
-    zip_path = OUTPUT_DIR / "images.zip"
+    zip_path = output_dir / "images.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for p in image_paths:
             zf.write(p, arcname=p.name)
