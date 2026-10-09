@@ -5,3 +5,32 @@ __pycache__/
 *.pyc
 .DS_Store
 .claude/
+
+# --- Secrets and local configuration -------------------------------------------------
+.env
+.env.*
+*.pem
+*.key
+.claude/
+
+# --- Datasets and CT-derived material ------------------------------------------------
+# Do NOT commit raw CT, masks, or images derived from them until redistribution rights
+# are confirmed (KiPA22 is CC BY-NC-4.0 via MedVision). Rebuild these locally instead.
+data/*
+!data/README.md
+*.nii
+*.nii.gz
+*.dcm
+validation/phase0/
+validation/phase0_pilot5/bundle/
+validation/phase0_pilot5/*.zip
+validation/phase0_pilot5/runs/
+validation/phase0_pilot5/pilot5_run_*/
+pilot5_run_*/
+pilot5_bundle/
+pilot5_images*.zip
+
+# --- Tooling -------------------------------------------------------------------------
+.ipynb_checkpoints/
+.pytest_cache/
+*.egg-info/
