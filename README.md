@@ -16,6 +16,7 @@ preprocessing and experiment harness, and an honest account of a first experimen
 [Engineering decisions](#engineering-decisions-and-risk-management) · [Reference measurements](#reference-measurements-and-their-limitations) ·
 [Testing](#testing-and-validation) · [Roadmap](#roadmap) · [Setup](#setup-and-reproduction) ·
 [Data, licensing and limitations](#data-model-licensing-limitations-and-intended-use) ·
+[Evaluation design](#evaluation-design-experiment-a-vs-b) · [Findings](#findings-from-the-original-run-and-what-they-imply) ·
 [Lessons](#what-i-learned) · [History notes](docs/HISTORY.md)
 
 ## Overview
@@ -31,19 +32,60 @@ Both are **open**. The project's objectives are to derive trustworthy reference 
 image-preparation step verifiable so a silent failure cannot recur, and run any model experiment with complete raw logging
 and descriptive, non-overstated reporting.
 
-**What this project demonstrates** (each point is backed by files in this repository):
+**The decision this informs.** Whether it is worth building a workflow that gives a VLM the pixel spacing and relies on its
+size estimates, or whether measurement should stay deterministic and mask-based. This is the project's own framing: no
+clinician, client or other stakeholder commissioned it.
 
-- *Failure analysis and data-quality assessment:* diagnosing blank model inputs from the data's own statistics ([audit](docs/PHASE0_AUDIT.md)).
-- *Validation thinking:* content-aware export checks, not only generic thresholds ([`src/ct_preprocessing.py`](src/ct_preprocessing.py)).
-- *Reproducible, traceable experiment design:* hash-pinned inputs, recorded run metadata, preserved raw responses ([`validation/phase0_pilot5/`](validation/phase0_pilot5/)).
-- *Honest reporting:* invalid results are withdrawn and labelled, not deleted or quietly re-spun.
+**Why measurement reliability and data quality matter.** A VLM returns a confident-looking number whatever it is shown, so a
+size-estimation workflow is only as trustworthy as (1) the reference values it is judged against and (2) the images it is
+given. This project's own first experiment shows the failure: blank images went in, and tidy error tables and charts came out,
+with nothing flagged (see [what went wrong](#what-went-wrong-and-how-it-was-identified)).
 
-This project applies business analysis principles to AI research through explicit problem definition, data-quality
-requirements, validation criteria, risk management, traceability, and evidence-based decision-making. Concretely, the research
-questions above are the problem definition; "model inputs must be non-blank and plausible HU" became enforced validation rules;
-risks (stale inputs, incomplete metadata, lost partial runs, pooled scored and exploratory results) each map to a control in the
-[decisions table](#engineering-decisions-and-risk-management); and the status table tags each area as verified, implemented, hypothesis, invalid or planned. It is a research prototype:
-it has no production deployment, no user requirements gathered from clinicians, and no clinical validation.
+**Business analysis work evidenced here.** Each row points to something in the repository, not to a claim.
+
+| Capability | Concrete example in this project | Where |
+|---|---|---|
+| Problem definition | RQ1 and RQ2, with explicit scope limits (one organ, one dataset, one model, zero-shot) | this section; [limitations](#data-model-licensing-limitations-and-intended-use) |
+| Requirements | After the failure, "model inputs must be non-blank and plausible HU" was written as enforced export-validation rules (`InvalidImageError`) | [`src/ct_preprocessing.py`](src/ct_preprocessing.py), [`tests/`](tests/) |
+| Evaluation design | A vs B comparison, scored vs exploratory cases, defined metrics, no pooled statistic | [Evaluation design](#evaluation-design-experiment-a-vs-b) |
+| Data-quality investigation | 222-553 byte PNGs, then 99.6-100% white pixels, then `uint16` values that are not HU, then an offset hypothesis | [`docs/PHASE0_AUDIT.md`](docs/PHASE0_AUDIT.md) |
+| Risk management | Stale inputs, incomplete metadata, lost partial runs and pooled results each map to a control | [decisions table](#engineering-decisions-and-risk-management) |
+| Traceability | Hash-pinned inputs, recorded run metadata, preserved raw responses, labelled invalid artifacts, documented history changes | [`validation/phase0_pilot5/`](validation/phase0_pilot5/), [`docs/HISTORY.md`](docs/HISTORY.md) |
+| Evidence-based recommendation | What the invalid run does and does not support, and the next step | [Findings](#findings-from-the-original-run-and-what-they-imply) |
+
+Scope: a research prototype with no production deployment, no requirements gathered from clinicians or other stakeholders
+(the requirements above are the author's own, derived from the failure), and no clinical validation.
+
+## Evaluation design: Experiment A vs B
+
+The experiment compares two prompts on the same slice image per case. The reference for every case is the ellipse fit to
+the ground-truth mask (see [reference measurements](#reference-measurements-and-their-limitations)).
+
+| | **A: no explicit spacing** | **B: explicit spacing** |
+|---|---|---|
+| Prompt | Asks for the major and minor axis in mm, with no scale | Same task and answer format, but first states the native pixel spacing (mm per pixel) and asks the model to use that scale |
+| Model and decoding | `google/medgemma-1.5-4b-it`, greedy, `max_new_tokens=300` | identical |
+| Answer format | `<answer>{"major_mm": X, "minor_mm": Y}</answer>` | identical |
+| Prompts | `m6-prompts-v1`, unchanged so results stay comparable with the original design | |
+
+**Metrics (as implemented).** Per axis: absolute error in mm and relative error (absolute error divided by the reference).
+Per case: the mean over the two axes, giving MAE (mm) and MRE (%). Per case, the *spacing effect* compares MRE of B with MRE
+of A: `improved`, `worsened` or `unchanged` (within 1 percentage point, the tolerance coded in the Milestone 6 notebook), or
+`undetermined` if either answer failed to parse or validate. Averages use scored cases only.
+
+**Cases.** Original run: scored cases 0, 3, 5, 6, 8 (`pass_basic`) and exploratory case 2 (`ellipse_outside_bbox`). Corrected
+pilot: scored 0, 6, 8 and exploratory 2, 4. Exploratory cases are reported separately and never pooled.
+
+**How each question connects to evidence.**
+
+| Question | What would answer it | Status |
+|---|---|---|
+| Input validity (a precondition for everything) | Export validation passes; 27 unit tests | **[Verified]** |
+| RQ1: does stating spacing change the estimate? | Per-case spacing effect and MRE, B vs A | Original run: measured but **[Invalid]**. Corrected run: **[Planned]**, and 3 scored cases cannot support an accuracy conclusion |
+| RQ2: grounded or templated? | Whether answers parse, and whether they vary across different tumours | Original run: observed, but only for blank inputs. Corrected pilot: **[Implemented]**, never run |
+
+Interpretation rule used throughout: a comparison counts only if the inputs passed validation, and with this few cases the
+pilot is a smoke test, not an accuracy study.
 
 ## Current status
 
@@ -84,6 +126,28 @@ consistent with a unit-slope intensity offset of roughly 1021-1024.
 about pixel-spacing context. **Those conclusions are withdrawn.** The offset **1024 is an unverified hypothesis**: the data
 constrain it to roughly 1000-1040, and the dataset documentation consulted does not state it. It is therefore configurable.
 
+## Findings from the original run, and what they imply
+
+These are observations from the **invalid** run (blank input images; data in `results/vlm_batch5_results.csv`). They are
+reported as observations about that run, not about MedGemma or pixel-spacing context.
+
+| Observation | What it does and does not show |
+|---|---|
+| A answered **15.0 x 10.0 mm in all 6 cases**, although the reference major axes ranged from 16.3 to 56.6 mm | With a blank image the model returned one fixed answer. This is ungrounded output on blank input. It says nothing about behaviour on real images |
+| B answered **1.5 x 1.0 mm in 4 of 6 cases** (exactly one tenth of A) and 10.5 x 5.5 and 11.5 x 11.5 mm in the other two | The images did not change between A and B, only the prompt text, so the answers moved with the text rather than the image. It does not show how spacing affects estimates on real images |
+| Average MAE 17.96 mm (A) vs 25.81 mm (B); MRE 51.3% vs 87.5%; B worse on 5 of 5 scored cases | Correct arithmetic on invalid inputs. Both prompts missed the references badly because the answers were effectively constant. **This must not be read as spacing harming performance** |
+| Nothing in the pipeline flagged the problem: tables, charts and a written interpretation were produced as normal | The one transferable, valid finding, and it is about process: without input validation an invalid experiment looks like a finished one. This is now covered by fail-closed validation and tests |
+
+**What this implies.**
+
+- **No conclusion about pixel spacing, in either direction, and none about clinical reliability.** RQ1 and RQ2 remain open.
+- **Next step: run the five-case smoke test on the corrected images.** It can show whether answers parse, whether they vary
+  across different tumours, and whether B differs from A, with every call logged. It cannot show accuracy.
+- **Only after that,** consider more cases, prompts that describe the resized image (the stated spacing does not match the
+  pixels the model sees; see limitations), and baselines such as mask-based and pixel-measurement estimates.
+- **Current position, not a result:** where a mask exists, deterministic geometry is the auditable reference, and the VLM
+  stays unproven until corrected-data inference has been run and examined.
+
 ## Architecture and workflow
 
 ```
@@ -120,6 +184,13 @@ KiPA22 NIfTI (CT + labels)
 
 From ground-truth masks only ([`results/batch_measurements.csv`](results/batch_measurements.csv)): largest-tumor axial slice,
 axes in mm. **These are 2D ellipse-fit proxies, not clinical measurements.**
+
+| Term | Meaning in this repository | What it is not |
+|---|---|---|
+| Reference measurement | Ellipse fit, in mm, to the ground-truth mask on the largest-tumor axial slice | A clinical measurement |
+| QC flag (`pass_basic`, `ellipse_outside_bbox`) | A geometric sanity check of the ellipse fit against the mask's bounding box | A measure of accuracy |
+| Model output | A VLM's parsed numeric answer; none from valid inputs exists yet | A measurement or a result |
+| Clinical measurement | A radiologist's or protocol measurement | Available or validated here |
 
 | Case | Spacing (mm) | Major | Minor | QC | | Case | Spacing (mm) | Major | Minor | QC |
 |---|---|---|---|---|---|---|---|---|---|---|
